@@ -43,7 +43,7 @@ def load_tof(file):
     # X = Energy, use for plotting
     X = np.array(data[0]).astype(int)
     # y = ToF
-    y = data[1].astype(int).reshape((-1,1))
+    y = data[1].astype(int)
     # Feature for training linear model
     phi = Phi(X)
     return X, y, phi
