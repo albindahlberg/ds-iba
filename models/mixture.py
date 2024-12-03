@@ -4,7 +4,7 @@ from tqdm import tqdm
 from scipy.linalg import qr
 from math import ceil
 import matplotlib.pyplot as plt
-
+from scipy.optimize import minimize
 
 class MixIRLS:
     #
@@ -16,6 +16,7 @@ class MixIRLS:
                  rho = 2,
                  nu = 1,
                  w_th = 0.1,
+                 lasso = None,
                  intercept = True,
                  unknownK = False,
                  wfun = lambda r: 1/(1+r**2),
@@ -34,15 +35,22 @@ class MixIRLS:
         self.rho = rho
         self.nu = nu
         self.w_th = w_th
+        self.lasso = lasso
+
         self.intercept = intercept
         self.unknownK = unknownK
+
         self.wfun = wfun
+
         self.T1 = T1
         self.T2 = T2
+
         self.tol = tol
         self.corrupt_frac = corrupt_frac
-        self.phase_2 = phase_2
         self.errfun = errfun
+
+        self.phase_2 = phase_2
+        
         self.plot = plot
         self.verbose = verbose
     
@@ -52,6 +60,8 @@ class MixIRLS:
         if len(w) == 0:
             w = np.ones(len(y),)
         ws = w
+
+
         WX = ws[:, np.newaxis] * X
         if len(y.shape) > 1: # y is a matrix
             wy = ws[:, np.newaxis] * y
@@ -68,6 +78,7 @@ class MixIRLS:
             beta = np.linalg.pinv(XtWX) @ XtWy
 
         sigma = np.mean((wy - (WX @ beta))**2, axis=0)
+
         return beta, sigma
 
     def detect_outliers(self, res, corrupt_frac):
@@ -259,7 +270,7 @@ class MixIRLS:
         # iter = inner iters done
         
         d = X.shape[1]
-        _, w, iter = self.MixIRLS_inner(X, y, beta_init)
+        beta, w, iter = self.MixIRLS_inner(X, y, beta_init)
         #I = w > w_th
         I = np.argpartition(w, -ceil(self.rho * d))[-ceil(self.rho*d):]
         I_count = np.count_nonzero(I)
