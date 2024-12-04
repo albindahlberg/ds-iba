@@ -4,7 +4,7 @@ from tqdm import tqdm
 from scipy.linalg import qr
 from math import ceil
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
+from sklearn.linear_model import Lasso
 
 class MixIRLS:
     #
@@ -16,7 +16,7 @@ class MixIRLS:
                  rho = 2,
                  nu = 1,
                  w_th = 0.1,
-                 lasso = None,
+                 alpha = None,
                  intercept = True,
                  unknownK = False,
                  wfun = lambda r: 1/(1+r**2),
@@ -35,7 +35,7 @@ class MixIRLS:
         self.rho = rho
         self.nu = nu
         self.w_th = w_th
-        self.lasso = lasso
+        self.alpha = alpha # Lasso regularization if specified
 
         self.intercept = intercept
         self.unknownK = unknownK
@@ -56,29 +56,27 @@ class MixIRLS:
     
     
     # weighted least squares
-    def weighted_ls(self, X, y, w=[]):
+    def weighted_ls(self, X, y, w=[], lasso=False):
         if len(w) == 0:
             w = np.ones(len(y),)
         ws = w
-
-
         WX = ws[:, np.newaxis] * X
         if len(y.shape) > 1: # y is a matrix
             wy = ws[:, np.newaxis] * y
         else:
             wy = ws * y
-
-        try:
-            # Use numpy's built-in least squares solver
+        
+        if lasso and self.alpha:
+            # lasso regression on final least squares
+            # already have intercept feature via self.intercept
+            lasso = Lasso(alpha=self.alpha, fit_intercept=False, max_iter=5000)
+            lasso.fit(WX, wy)
+            beta = lasso.coef_.T
+        else:
+            # weighted least squares otherwise
             beta = np.linalg.lstsq(WX, wy, rcond=None)[0]
-        except np.linalg.LinAlgError:
-            # If that fails, try using the pseudo-inverse
-            XtWX = WX.T @ WX
-            XtWy = WX.T @ wy
-            beta = np.linalg.pinv(XtWX) @ XtWy
-
+        
         sigma = np.mean((wy - (WX @ beta))**2, axis=0)
-
         return beta, sigma
 
     def detect_outliers(self, res, corrupt_frac):
@@ -244,7 +242,7 @@ class MixIRLS:
                 for k in range(K):
                         b, s =  self.weighted_ls(X[samples_to_use,:], y[samples_to_use], w[samples_to_use,k])
                         self.beta[:, k] = b.flatten() 
-                        self.sigma[k] = s[0]
+                        self.sigma[k] = s
                 beta_diff = np.linalg.norm(self.beta - self.beta_prev, 'fro') / np.linalg.norm(self.beta, 'fro')
         
                 # update iter and report
@@ -274,11 +272,11 @@ class MixIRLS:
         #I = w > w_th
         I = np.argpartition(w, -ceil(self.rho * d))[-ceil(self.rho*d):]
         I_count = np.count_nonzero(I)
-        beta, sigma = self.weighted_ls(X[I,:], y[I])
+        beta, sigma = self.weighted_ls(X[I,:], y[I], lasso=True)
         if self.plot:
             pred = X[:,:] @ beta
-            plt.scatter(X[I,1], y[I], s=20, color='blue', marker='x')
             plt.plot(X[:,1], pred, color='red')
+            plt.scatter(X[I,1], y[I], s=30, color='blue')
             plt.show()
         if self.verbose:
             print('observed error: ' + str(np.linalg.norm(X[I,:] @ beta - y[I]) / np.linalg.norm(y[I])) + '. active support size: ' + str(I_count))
