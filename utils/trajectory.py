@@ -72,9 +72,27 @@ def fit(x_traj, y_traj, x_data, y_data):
 
     return params
 
-# Function to find trajectory boundaries
-def find_domain(x_data, y_data, params):
-    return min(x_data), max(x_data)
+# Function to find trajectory boundary
+def find_domain(x_data, y_data, params, radius=10, density_threshold=3):
+    xx = np.linspace(min(x_data), max(x_data), 500)
+    yy = fx(xx, *params)
+
+    density = []
+    for i in range(len(xx)):
+        x, y = xx[i], yy[i]  
+
+        # Compute distance to all points from trajectory for each x
+        distances = np.sqrt((x_data - x)**2 + (y_data - y)**2)
+
+        # Count points within radius ("density")
+        density_value = np.sum(distances <= radius)
+        density.append(density_value)
+
+    # Find where the trajectory likely ends
+    non_zero_indices = np.where(np.array(density) > density_threshold)[0]
+    x_end = xx[non_zero_indices[-1]] if non_zero_indices[-1] < len(xx) - 1 else max(x_data)
+
+    return min(x_data), x_end
 
 # Function to find confidence bands
 def compute_confidence_band(x_data, y_data, params):
