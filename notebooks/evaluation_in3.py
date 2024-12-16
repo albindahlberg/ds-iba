@@ -3,6 +3,14 @@ import pandas as pd
 from sklearn.metrics import pairwise_distances
 import matplotlib.pyplot as plt
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+
+from utils.preprocess import Phi
+from image_processing import process
+
+from models.mixture import MixIRLS
 
 def load_in_file(file_path):
     data = pd.read_csv(file_path, delim_whitespace=True, header=None, names=["x", "y"])
@@ -36,38 +44,67 @@ def load_cut_files(cut_dir):
         cut_data.append(data[["ToF", "Energy", "Cluster"]])
     return pd.concat(cut_data, ignore_index=True)
 
-#placeholder, byt till riktig modell
-def simple_model(in_data):
-    n_clusters = 6  
-    cluster_labels = np.random.choice(range(1, n_clusters + 1), len(in_data))
-    in_data["Cluster"] = cluster_labels
+def mixirls(in_data):
+    nr_clusters = 2
+    in_data_complete = in_data.to_numpy()
+    in_data_unique = np.unique(in_data_complete, axis=0)
+    xraw = in_data_unique[:,1]
+    yraw = in_data_unique[:,0]
+    X, y = process(xraw, yraw, noise_sensitivity=0.9)
+
+    exponents = [-1/2, -1]
+    phi = Phi(X, exponents)
+    K = nr_clusters
+    w_th=0.9
+
+    model = MixIRLS(K=K, w_th=w_th)
+    model.train(phi, y)
+    
+    xraw = in_data_complete[:,1]
+    yraw = in_data_complete[:,0]
+    phi_raw = Phi(xraw, exponents=exponents)
+    result = model.assign_cluster(phi_raw, yraw)
+    in_data["Cluster"] = result
     return in_data
 
 def evaluate_matching(model_data, ground_truth):
     cluster_matches = []
-    for model_cluster in model_data["Cluster"].unique():
+    correct_assignments = 0
+    total_points = len(model_data)
+    clusters = model_data["Cluster"].unique()
+    
+    for model_cluster in clusters[1:]:
         model_points = model_data[model_data["Cluster"] == model_cluster][["x", "y"]].values
         best_match, min_distance = None, float("inf")
+        
         for ground_truth_cluster in ground_truth["Cluster"].unique():
             ground_truth_points = ground_truth[ground_truth["Cluster"] == ground_truth_cluster][["ToF", "Energy"]].values
             if len(model_points) > 0 and len(ground_truth_points) > 0:
                 distance_matrix = pairwise_distances(model_points, ground_truth_points)
-                distance = distance_matrix.min()
+                distance = distance_matrix.min(axis=1).mean()  
+                
                 if distance < min_distance:
                     best_match, min_distance = ground_truth_cluster, distance
+        
         cluster_matches.append({"Model Cluster": model_cluster, "Ground Truth Cluster": best_match, "Distance": min_distance})
-
+        matching_points = model_data[(model_data["Cluster"] == model_cluster) & 
+                                     (ground_truth["Cluster"] == best_match)]
+        correct_assignments += len(matching_points) 
+    
     results = pd.DataFrame(cluster_matches)
+
+    accuracy = correct_assignments / total_points
 
     print("\nCluster Matching Results:")
     print(results)
     print(f"\nAverage Matching Distance: {results['Distance'].mean()}")
+    print(f"Accuracy: {accuracy * 100:.2f}%")
 
-    return results
+    return results, accuracy
 
-in_data = load_in_file("../cut_eval/in_1/I127_36MeV_ScN-11_pos11.asc")
-cut_data = load_cut_files("../cut_eval/cut_1")
-model_predictions = simple_model(in_data)  
+in_data = load_in_file("../cut_eval/in_3/I127_36MeV_ref-TiN_pos02.asc")
+cut_data = load_cut_files("../cut_eval/cut_3")
+model_predictions = mixirls(in_data)
 results = evaluate_matching(model_predictions, cut_data)
 
 plt.figure(figsize=(10, 8))
@@ -77,7 +114,7 @@ for cluster in model_predictions["Cluster"].unique():
 
 for cluster in cut_data["Cluster"].unique():
     cluster_data = cut_data[cut_data["Cluster"] == cluster]
-    plt.scatter(cluster_data["ToF"], cluster_data["Energy"], label=f"GT Cluster {cluster}", marker='x', alpha=0.6, s=20)
+    plt.scatter(cluster_data["ToF"], cluster_data["Energy"], label=f"GT Cluster {cluster}", marker='x', alpha=0.05, s=20)
 
 plt.xlabel("Energy")
 plt.ylabel("ToF")
