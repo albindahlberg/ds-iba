@@ -212,12 +212,12 @@ class MixIRLS:
         variance = np.var(residuals)
         w = 1/np.sqrt(2 * np.pi * variance) * np.exp(-residuals**2 / (2 * variance))
         # Rescale theshold w.r.t. maximum weight
-        #threshold = self.w_th * np.max(w)
+        threshold = self.w_th * np.max(w)
         # Compute the percentile threshold
-        percentile_value = np.percentile(w, 100*self.w_th)  # self.percentile is the desired percentile (0-100)
+        #percentile_value = np.percentile(w, 100*self.w_th)  # self.percentile is the desired percentile (0-100)
 
         # Select points with w >= percentile value
-        I = w > percentile_value
+        I = w > threshold
         
         # Select points with w >= threshold
         #I = w >= self.w_th
