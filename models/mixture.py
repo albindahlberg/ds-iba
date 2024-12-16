@@ -4,8 +4,7 @@ from tqdm import tqdm
 from scipy.linalg import qr
 from math import ceil
 import matplotlib.pyplot as plt
-from sklearn.linear_model import Lasso
-from scipy.optimize import minimize
+
 
 
 class MixIRLS:
@@ -19,7 +18,7 @@ class MixIRLS:
         - Making the algorithm a class
         - Refinement step for weights after inner IRLS to follow regression trajectory
         - Change the requirement for S'
-        - Estimated variance of of components via moment-matching
+        - Estimated variance of components 
         - Constrained lasso regression instead of least squares at the end of algorithm
         - Intercept option
         - Plotting of first features (non-intercept) option
@@ -28,12 +27,12 @@ class MixIRLS:
     Parameters
     ----------
     K : int, optional (default=2)
-        The number of clusters (mixture components) to fit.
+        The etamber of clusters (mixture components) to fit.
 
     rho : float, optional (default=2)
         Oversampling parameter for the IRLS algorithm.
 
-    nu : float, optional (default=1)
+    eta : float, optional (default=1)
         Parameter for the IRLS algorithm.
 
     w_th : float, optional (default=0.95)
@@ -46,13 +45,13 @@ class MixIRLS:
         Whether to include an intercept in the regression models.
 
     unknownK : bool, optional (default=False)
-        If True, the algorithm dynamically estimates the number of clusters (mixture components).
+        If True, the algorithm dynamically estimates the etamber of clusters (mixture components).
 
     wfun : callable, optional (default=lambda x: 1/(1+x**2))
         The weight function used in the IRLS algorithm.
 
     T1 : int, optional (default=1000)
-        Maximum number of iterations for the inner IRLS loop.
+        Maximum etamber of iterations for the inner IRLS loop.
 
     corrupt_frac : float, optional (default=0)
         Fraction of data assumed to be corrupted (outliers).
@@ -67,10 +66,8 @@ class MixIRLS:
     def __init__(self,
                  K=2,
                  rho=2,
-                 nu=1,
+                 eta=1,
                  w_th=0.95,
-                 alpha=None,
-                 refinement_iter=5,
                  intercept=True,
                  unknownK=False,
                  wfun=lambda x: 1/(1+x**2),
@@ -80,10 +77,8 @@ class MixIRLS:
                  verbose=False):
         self.K = K
         self.rho = rho
-        self.nu = nu
+        self.eta = eta
         self.w_th = w_th
-        self.alpha = alpha
-        self.refinement_iter = refinement_iter
         self.intercept = intercept
         self.unknownK = unknownK
         self.wfun = wfun
@@ -205,79 +200,65 @@ class MixIRLS:
         beta = np.linalg.lstsq(WX, wy, rcond=None)[0]
 
         # estimated variance
-        sigma = np.mean((wy - (WX @ beta))**2, axis=0)
+        sigma = np.mean((y - (X @ beta))**2, axis=0)
         return beta, sigma
 
-    def weighted_ls_constrained(self, X, y, weights, lasso=False):
-        """
-        Solve a weighted least squares problem with eventual lasso regularization with constraints:
-        - beta[0] >= 0
-        - beta[1:] < 0
-        """
-        def objective(beta):
-            # Weighted least squares objective
-            residuals = y - X @ beta
-            return np.sum(weights * residuals**2) + (self.alpha*np.sum(np.abs(beta)) if lasso and self.alpha != None else 0)
-
-        # Number of features
-        n_features = X.shape[1]
-
-        # Initial guess for beta
-        beta_init = np.zeros(n_features)
-
-        # Constraints
-        constraints = [
-            {'type': 'ineq', 'fun': lambda beta: beta[0]},  # beta[0] >= 0
-            {'type': 'ineq', 'fun': lambda beta: -beta[1:]},  # beta[1:] < 0
-        ]
-
-        # Solve the constrained optimization problem
-        result = minimize(objective, beta_init, constraints=constraints, method='SLSQP')
-
-        if not result.success:
-            raise ValueError("Optimization failed: " + result.message)
-
-        return result.x, np.sqrt(np.mean((y - X @ result.x)**2))  # beta, sigma
-
-    # Update the `find_component` method to call the constrained WLS
     def find_component(self, X, y, beta_init=[]):
         beta, w, iter = self.MixIRLS_inner(X, y, beta_init)
 
-        ##### Refinement step, weights gaussian likelihood        
-        for _ in range(self.refinement_iter):
-            # Compute residuals based on current beta
-            residuals = y - X @ beta
+        ##### Refinement step, weights along gaussian likelihood        
+        residuals = y - X @ beta
+        # Update weights as gaussian
+        variance = np.var(residuals)
+        w = 1/np.sqrt(2 * np.pi * variance) * np.exp(-residuals**2 / (2 * variance))
+        # Rescale theshold w.r.t. maximum weight
+        #threshold = self.w_th * np.max(w)
+        # Compute the percentile threshold
+        percentile_value = np.percentile(w, 100*self.w_th)  # self.percentile is the desired percentile (0-100)
 
-            # Update weights as gaussian
-            variance = np.var(residuals)
-            w = 1/np.sqrt(2 * np.pi * variance) * np.exp(-residuals**2 / (2 * variance))
+        # Select points with w >= percentile value
+        I = w > percentile_value
+        
+        # Select points with w >= threshold
+        #I = w >= self.w_th
+        I_count = np.count_nonzero(I)
 
-            # Rescale theshold w.r.t. maximum weight
-            threshold = self.w_th * np.max(w)
+        beta, sigma = self.weighted_ls(X[I, :], y[I])
 
-            # Select points with w >= threshold
-            I = w >= threshold
-            I_count = np.count_nonzero(I)
-    
-            beta, sigma = self.weighted_ls_constrained(X[I, :], y[I], weights=w[I], lasso=self.alpha)
         if self.plot:
             pred = X @ beta
             plt.plot(X[:, 1], pred, color='red')
             plt.scatter(X[I, 1], y[I], s=1, color='blue')
             plt.show()
+            
+            # Sort the values of w
+            w_sorted = np.sort(w)
+
+            # Compute the cumulative probabilities
+            cdf = np.arange(1, len(w_sorted) + 1) / len(w_sorted)
+
+            # Plot the empirical CDF
+            plt.plot(w_sorted, cdf, label='CDF of w')
+            plt.axvline(x=percentile_value, color='red', linestyle='-', label=f'{100*self.w_th}th percentile = {percentile_value:.4f}')
+            plt.title('Empirical CDF of w')
+            plt.xlabel('w')
+            plt.ylabel('CDF')
+            plt.legend()
+            plt.show()
         if self.verbose:
             print(f'Observed error: {np.linalg.norm(X[I, :] @ beta - y[I]) / np.linalg.norm(y[I])}. '
                 f'Active support size: {I_count}')
+
         return beta, sigma, w, iter, I
 
     def MixIRLS_inner(self, X, y, beta_init):
-        # if beta_init is not supplied or == -1, the OLS is used
 
         n,d = X.shape
 
         beta = np.zeros((d,))
         Q, R, perm = qr(X, mode='economic', pivoting=True)
         if len(beta_init) == 0:
+            # if beta_init is not supplied or == -1, the OLS is used
             beta[perm], _ = self.weighted_ls(R, Q.T @ y)
         else:
             beta = beta_init
@@ -300,7 +281,7 @@ class MixIRLS:
                 s = 1
 
             # weights
-            w = self.wfun(r / (self.nu * s))
+            w = self.wfun(r / (self.eta * s))
 
             # beta
             beta_prev = beta.copy()
@@ -345,7 +326,7 @@ class MixtureLinearRegression():
     Parameters
     ----------
     K : int
-        Number of components
+        etamber of components
 
     beta : float
         Noise precision hyperparameter
@@ -369,7 +350,7 @@ class MixtureLinearRegression():
         Choosable random seed. If None, model will do completely random initialization
     """    
     def __init__(self, K, beta, iterations, bias=False, epsilon=1e-3, lam=1e-4, eta=1e-6, random_state=None):
-        # Number of components
+        # etamber of components
         self.K = K
         # Initialize component variance
         self.beta_k = np.full(self.K, beta)
@@ -379,7 +360,7 @@ class MixtureLinearRegression():
         self.gamma_nk = 0
         # Mixture weights (K,)
         self.pi = np.zeros((1, self.K)) + 1/(K)
-        # Number of iterations
+        # etamber of iterations
         self.iterations = iterations
         # Bias flag
         self.bias = bias
@@ -416,7 +397,7 @@ class MixtureLinearRegression():
         # Add log of mixing coefficients + regularization
         log_weighted_probs_k = np.log(self.pi + self.epsilon) + log_probs_k
 
-        # Use log-sum-exp trick for numerical stability
+        # Use log-sum-exp trick for etamerical stability
         log_norm = scipy.special.logsumexp(log_weighted_probs_k, axis=1, keepdims=True)
 
         # log likelihood for thresholding
