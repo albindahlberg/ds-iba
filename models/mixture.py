@@ -1,6 +1,340 @@
 import numpy as np
 import scipy
 from tqdm import tqdm
+from scipy.linalg import qr
+from math import ceil
+import matplotlib.pyplot as plt
+from sklearn.linear_model import Lasso
+from scipy.optimize import minimize
+
+
+class MixIRLS:
+    """
+    Sequential algorithm for Mixed Linear Regression.
+
+    Originally written by Pini Zilber & Boaz Nadler / 2023.
+    Modified by Albin Åberg Dahlberg, Nils Staffsgård, Johan Hedenström, Folke Hilding / 2024.
+
+    Modifications include:
+        - Making the algorithm a class
+        - Refinement step for weights after inner IRLS to follow regression trajectory
+        - Change the requirement for S'
+        - Estimated variance of of components via moment-matching
+        - Constrained lasso regression instead of least squares at the end of algorithm
+        - Intercept option
+        - Plotting of first features (non-intercept) option
+        - Removal of phase 2
+
+    Parameters
+    ----------
+    K : int, optional (default=2)
+        The number of clusters (mixture components) to fit.
+
+    rho : float, optional (default=2)
+        Oversampling parameter for the IRLS algorithm.
+
+    nu : float, optional (default=1)
+        Parameter for the IRLS algorithm.
+
+    w_th : float, optional (default=0.95)
+        Threshold for weight refinement after the inner IRLS step.
+
+    alpha : float or None, optional (default=None)
+        Regularization parameter for the constrained lasso regression. If None, no regularization is applied.
+
+    intercept : bool, optional (default=True)
+        Whether to include an intercept in the regression models.
+
+    unknownK : bool, optional (default=False)
+        If True, the algorithm dynamically estimates the number of clusters (mixture components).
+
+    wfun : callable, optional (default=lambda x: 1/(1+x**2))
+        The weight function used in the IRLS algorithm.
+
+    T1 : int, optional (default=1000)
+        Maximum number of iterations for the inner IRLS loop.
+
+    corrupt_frac : float, optional (default=0)
+        Fraction of data assumed to be corrupted (outliers).
+
+    plot : bool, optional (default=False)
+        Whether to generate plots of the first features.
+
+    verbose : bool, optional (default=False)
+        If True, the algorithm prints detailed progress updates.
+    """
+
+    def __init__(self,
+                 K=2,
+                 rho=2,
+                 nu=1,
+                 w_th=0.95,
+                 alpha=None,
+                 refinement_iter=5,
+                 intercept=True,
+                 unknownK=False,
+                 wfun=lambda x: 1/(1+x**2),
+                 T1=int(1e3),
+                 corrupt_frac=0,
+                 plot=False,
+                 verbose=False):
+        self.K = K
+        self.rho = rho
+        self.nu = nu
+        self.w_th = w_th
+        self.alpha = alpha
+        self.refinement_iter = refinement_iter
+        self.intercept = intercept
+        self.unknownK = unknownK
+        self.wfun = wfun
+        self.T1 = T1
+        self.corrupt_frac = corrupt_frac
+        self.plot = plot
+        self.verbose = verbose
+        self.supports = np.array([])
+        self.Sprim = []
+
+
+    def train(self, X, y):
+        # add intercept
+        if self.intercept:
+            X = np.c_[np.ones(len(X),), X]
+
+        n, d = X.shape
+
+        ## set parameters
+        K = 0
+        if self.unknownK:
+            K = 20
+        else:
+            K = self.K
+
+        # initialize beta randomly
+        beta_init = np.random.randn(d, K)
+
+
+        # where to store parameters
+        self.beta = np.zeros((d,K))
+        self.sigma = np.zeros((K,))
+        # active samples for each component regression
+        supports = np.ones((n,K), dtype=np.bool_)
+        self.supports = supports
+    
+        # store importande index bits for each component
+        Sprim = []
+        w_th = self.w_th
+        first_component_w = np.zeros_like(y)
+        iter = 0
+        k = 0
+        while k < K:
+            # must also iterate for last component, as some of the active samples might
+            # belong to other components, or be data outliers
+
+            # currenet active samples
+            curr_X = X[supports[:,k],:]
+            curr_y = y[supports[:,k]]
+            if self.plot:
+                plt.scatter(curr_X[:, 1], curr_y, color='grey', s=1, alpha=0.4)
+            # if we repeat due to too low w_th, don't calculate first
+            # component again as we can take it as is
+            if k==0 and np.any(first_component_w):
+                # get weights from the first component
+                if self.verbose:
+                    print('use same component 1')
+                w = first_component_w
+                self.beta[:, 1:] = 0
+            else:
+                if self.verbose:
+                    print('find component ' + str(k+1))
+
+                # find component
+                beta, sigma, w, inner_iter, sprim = self.find_component(curr_X, curr_y, beta_init[:,k])
+                iter = iter + inner_iter
+                self.beta[:,k] = beta.flatten()
+                self.sigma[k] = sigma
+                if k==0: # store first component in case we restart MixIRLS
+                    first_component_w = w
+
+            next_oversampling = max(0, np.count_nonzero(w <= w_th) - self.corrupt_frac * n) / d
+
+            if not self.unknownK and (k < K-1) and (next_oversampling < self.rho): # need more active samples
+                if self.verbose:
+                    print('w_th ' + str(w_th) + ' is too low! Starting over...')
+                w_th = w_th + 0.1
+                k = 0
+                Sprim = []
+                continue
+            else: # update index sets
+                new_support = supports[:, k].copy()
+                new_support[new_support] = np.invert(sprim)
+
+                if k < K-1: # not last component
+                    supports[:, k+1] = new_support
+
+            # If K is unknown, fix K when the next component has too few
+            # active samples
+            if self.unknownK and (next_oversampling < self.rho):
+                K = k+1
+                self.beta = self.beta[:, :K]
+                self.sigma = self.sigma[:K]
+                Sprim.append(sprim)
+
+                if self.verbose:
+                    print('MixIRLS. found K=' + str(K) + ' components, stopping here')
+                break
+
+            Sprim.append(sprim)
+            k = k + 1
+
+        self.support = supports
+        self.Sprim = Sprim
+        return Sprim, supports, iter
+
+    # weighted least squares
+    def weighted_ls(self, X, y, w=[]):
+        if len(w) == 0:
+            w = np.ones(len(y),)
+        ws = w
+        WX = ws[:, np.newaxis] * X
+        if len(y.shape) > 1: # y is a matrix
+            wy = ws[:, np.newaxis] * y
+        else:
+            wy = ws * y
+
+        # weighted least squares
+        beta = np.linalg.lstsq(WX, wy, rcond=None)[0]
+
+        # estimated variance
+        sigma = np.mean((wy - (WX @ beta))**2, axis=0)
+        return beta, sigma
+
+    def weighted_ls_constrained(self, X, y, weights, lasso=False):
+        """
+        Solve a weighted least squares problem with eventual lasso regularization with constraints:
+        - beta[0] >= 0
+        - beta[1:] < 0
+        """
+        def objective(beta):
+            # Weighted least squares objective
+            residuals = y - X @ beta
+            return np.sum(weights * residuals**2) + (self.alpha*np.sum(np.abs(beta)) if lasso and self.alpha != None else 0)
+
+        # Number of features
+        n_features = X.shape[1]
+
+        # Initial guess for beta
+        beta_init = np.zeros(n_features)
+
+        # Constraints
+        constraints = [
+            {'type': 'ineq', 'fun': lambda beta: beta[0]},  # beta[0] >= 0
+            {'type': 'ineq', 'fun': lambda beta: -beta[1:]},  # beta[1:] < 0
+        ]
+
+        # Solve the constrained optimization problem
+        result = minimize(objective, beta_init, constraints=constraints, method='SLSQP')
+
+        if not result.success:
+            raise ValueError("Optimization failed: " + result.message)
+
+        return result.x, np.sqrt(np.mean((y - X @ result.x)**2))  # beta, sigma
+
+    # Update the `find_component` method to call the constrained WLS
+    def find_component(self, X, y, beta_init=[]):
+        beta, w, iter = self.MixIRLS_inner(X, y, beta_init)
+
+        ##### Refinement step, weights gaussian likelihood        
+        for _ in range(self.refinement_iter):
+            # Compute residuals based on current beta
+            residuals = y - X @ beta
+
+            # Update weights as gaussian
+            variance = np.var(residuals)
+            w = 1/np.sqrt(2 * np.pi * variance) * np.exp(-residuals**2 / (2 * variance))
+
+            # Rescale theshold w.r.t. maximum weight
+            threshold = self.w_th * np.max(w)
+
+            # Select points with w >= threshold
+            I = w >= threshold
+            I_count = np.count_nonzero(I)
+    
+            beta, sigma = self.weighted_ls_constrained(X[I, :], y[I], weights=w[I], lasso=self.alpha)
+        if self.plot:
+            pred = X @ beta
+            plt.plot(X[:, 1], pred, color='red')
+            plt.scatter(X[I, 1], y[I], s=1, color='blue')
+            plt.show()
+        if self.verbose:
+            print(f'Observed error: {np.linalg.norm(X[I, :] @ beta - y[I]) / np.linalg.norm(y[I])}. '
+                f'Active support size: {I_count}')
+        return beta, sigma, w, iter, I
+
+    def MixIRLS_inner(self, X, y, beta_init):
+        # if beta_init is not supplied or == -1, the OLS is used
+
+        n,d = X.shape
+
+        beta = np.zeros((d,))
+        Q, R, perm = qr(X, mode='economic', pivoting=True)
+        if len(beta_init) == 0:
+            beta[perm], _ = self.weighted_ls(R, Q.T @ y)
+        else:
+            beta = beta_init
+        # adjust residuals according to DuMouchel & O'Brien (1989)
+        E, _ = self.weighted_ls(R.T, X[:, perm].T)
+        E = E.T
+        h = np.sum(E * E, axis=1)
+        h[h > 1 - 1e-4] = 1 - 1e-4
+        adjfactor = 1 / np.sqrt(1-h)
+        # IRLS
+        for iter in range(self.T1):
+            # residuals
+            r = adjfactor * (y.flatten() - X @ beta)
+            rs = np.sort(np.abs(r))
+
+            # scale
+            s = np.median(rs[d:]) / 0.6745 # mad sigma
+            s = max(s, 1e-6 * np.std(y)) # lower bound s in case of a good fit
+            if s == 0: # perfect fit
+                s = 1
+
+            # weights
+            w = self.wfun(r / (self.nu * s))
+
+            # beta
+            beta_prev = beta.copy()
+            beta[perm], _ = self.weighted_ls(X[:,perm], y.flatten(), w)
+
+            # early stop if beta doesn't change
+            if np.all(np.abs(beta-beta_prev) <= np.sqrt(1e-16) * np.maximum(np.abs(beta), np.abs(beta_prev))):
+                break
+
+        return beta, w, iter
+
+    def predict(self, X):
+        if self.intercept:
+            X = np.c_[np.ones(len(X),), X]
+        return X @ self.beta
+
+    def predict_k(self, X, k):
+        if self.intercept:
+            X = np.c_[np.ones(len(X),), X]
+        return X @ self.beta[:,k]
+
+    def get_component_indeces(self, k):
+        """ Yields the points of a specified component """
+        i = self.supports[:,k] # bit array of points that were considered
+        j = self.Sprim[k]  # bit array of used points
+        return i, j
+
+    def get_component_points(self, X, y, k):
+        """ Yields the points of a specified component """
+        i, j = self.get_component_indeces(k)
+        return X[i][j], y[i][j]
+
+
+
 
 class MixtureLinearRegression():
     """Implementation of Mixture of Linear Regressions. 

@@ -29,22 +29,32 @@ def Phi(x, exponents=[-1/2]):
             phi[:,i] = np.power(x, b).flatten()
     return phi
 
-def load_tof(file):
+def load_tof(file, unique=False):
     """ Reads the data from a ToF experiment
     
-    Returns:
-    --------
+    Parameters
+    ----------
+    file : string
+        Name of .lst file to read.
+
+    unique : bool, optional
+        Flag for removing duplicate samples
+    
+    Returns
+    ----------
     X : Energy (channels)
     y : ToF (channels)
-    phi : feature engineered energy for linear relationship
-        phi = 1/sqrt(X)
     """
     data = load_lst_file(file)
     # X = Energy, use for plotting
     X = np.array(data[0]).astype(int)
     # y = ToF
-    y = data[1].astype(int).reshape((-1,1))
-    # Feature for training linear model
-    phi = Phi(X)
-    return X, y, phi
+    y = np.array(data[1]).astype(int)
+    
+    if unique:
+        data = np.vstack([X,y]).T
+        data = np.unique(data, axis=0)
+        X, y = data[:,0], data[:,1]
+
+    return X, y
     
