@@ -230,21 +230,6 @@ class MixIRLS:
             plt.plot(X[:, 1], pred, color='red')
             plt.scatter(X[I, 1], y[I], s=1, color='blue')
             plt.show()
-            
-            # Sort the values of w
-            w_sorted = np.sort(w)
-
-            # Compute the cumulative probabilities
-            cdf = np.arange(1, len(w_sorted) + 1) / len(w_sorted)
-
-            # Plot the empirical CDF
-            plt.plot(w_sorted, cdf, label='CDF of w')
-            plt.axvline(x=percentile_value, color='red', linestyle='-', label=f'{100*self.w_th}th percentile = {percentile_value:.4f}')
-            plt.title('Empirical CDF of w')
-            plt.xlabel('w')
-            plt.ylabel('CDF')
-            plt.legend()
-            plt.show()
         if self.verbose:
             print(f'Observed error: {np.linalg.norm(X[I, :] @ beta - y[I]) / np.linalg.norm(y[I])}. '
                 f'Active support size: {I_count}')
@@ -313,8 +298,18 @@ class MixIRLS:
         """ Yields the points of a specified component """
         i, j = self.get_component_indeces(k)
         return X[i][j], y[i][j]
+    
+    def assign_cluster(self, X, y):
+        y_pred = self.predict(X)
+        labels = np.full(len(X), -1, dtype=int)
 
-
+        for i in range(len(X)):
+            for k in range(self.K):
+                if np.abs(y[i] - y_pred[i, k]) <= 2 * np.sqrt(self.sigma[k]):
+                    labels[i] = k  
+                    break
+                
+        return labels
 
 
 class MixtureLinearRegression():
