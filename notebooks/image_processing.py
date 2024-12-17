@@ -2,9 +2,9 @@ import numpy as np
 import cv2
 from matplotlib.path import Path
 
-def process(X, Y, noise_sensitivity = 0.8):
+def process(X, Y, strength = 0.15):
     traj_x, traj_y = None, None
-    noise_threshold = int(round((1 - noise_sensitivity)*255))
+    noise_threshold = int(round(strength*255))
     try:
         # Image to map data to
         img_size = (max(X), max(Y))
@@ -16,10 +16,8 @@ def process(X, Y, noise_sensitivity = 0.8):
         img[y_norm, x_norm] = 255
         
         # Image processing
-        blurred_img = cv2.GaussianBlur(img, (5, 5), 0)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-        closed_img = cv2.morphologyEx(blurred_img, cv2.MORPH_CLOSE, kernel)
-        _, binary_img = cv2.threshold(closed_img, noise_threshold, 255, cv2.THRESH_BINARY)
+        blurred_img = cv2.GaussianBlur(img, (5, 5), 0)        
+        _, binary_img = cv2.threshold(blurred_img, noise_threshold, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
         # Remove contours with length 0 and flatten
