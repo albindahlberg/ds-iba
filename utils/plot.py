@@ -12,5 +12,5 @@ def plot_bananas(x, y, title=None,alpha=0.3, s=0.1):
 
 def make_palette(K, cmap=plt.cm.hsv):
     """ Creates an evenly spaced color map with K colors """
-    indices = np.linspace(0, 1, K)
+    indices = np.linspace(0, 1, K+1)
     return cmap(indices)
