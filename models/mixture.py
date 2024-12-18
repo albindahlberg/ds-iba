@@ -302,13 +302,18 @@ class MixIRLS:
     def assign_cluster(self, X, y):
         y_pred = self.predict(X)
         labels = np.full(len(X), -1, dtype=int)
+        residuals = np.full((len(X), self.K), np.inf)
 
         for i in range(len(X)):
             for k in range(self.K):
-                if np.abs(y[i] - y_pred[i, k]) <= 2 * np.sqrt(self.sigma[k]):
-                    labels[i] = k  
-                    break
-                
+                residual = np.abs(y[i] - y_pred[i, k])
+                if residual <= 2 * np.sqrt(self.sigma[k]):
+                    residuals[i, k] = residual
+                    
+            # Assign the label with the smallest residual if any residual is valid
+            if np.any(residuals[i, :] != np.inf):
+                labels[i] = np.argmin(residuals[i, :])
+
         return labels
 
 
