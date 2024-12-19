@@ -307,7 +307,7 @@ class MixIRLS:
         for i in range(len(X)):
             for k in range(self.K):
                 residual = np.abs(y[i] - y_pred[i, k])
-                if residual <= 2 * np.sqrt(self.sigma[k]):
+                if residual <= 3 * np.sqrt(self.sigma[k]):
                     residuals[i, k] = residual
                     
             # Assign the label with the smallest residual if any residual is valid
