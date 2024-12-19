@@ -47,20 +47,13 @@ def load_cut_files(cut_dir):
     return pd.concat(cut_data, ignore_index=True)
 
 def assign_noise(in_data, cut_data):
-    # Copy the original in_data to result_data
     result_data = in_data.copy()
-    
-    # Initialize the 'Cluster' column with 'Noise'
     result_data['Cluster'] = 'Noise'
-    
-    # Iterate over the rows in cut_data
+
     for _, row in cut_data.iterrows():
-        # Find matching rows in result_data based on x, y, ToF, and E
         matching_rows = result_data[(result_data['x'] == row['ToF']) & (result_data['y'] == row['Energy'])]
-        
-        # Update the 'Cluster' of the matching rows with the value from cut_data
         result_data.loc[matching_rows.index, 'Cluster'] = row['Cluster']
-    
+
     return result_data
 
 
@@ -91,60 +84,7 @@ def mixirls(in_data):
     in_data["Cluster"] = result
     return in_data
 
-def evaluate_matching(model_data, ground_truth):
-    cluster_matches = []
-    correct_assignments = 0
-    model_clusters = model_data["Cluster"].replace({-1: "Noise", 0: "N", 1: "Ti"})#.unique()
-    ground_truth_clusters = ground_truth["Cluster"]#.replace({-1: "Noise", 0: "N", 1: "Ti"}).unique()
-
-    
-    for model_cluster in model_clusters.unique():
-        model_points = model_data[model_data["Cluster"].replace({-1: "Noise", 0: "N", 1: "Ti"}) == model_cluster][["x", "y"]].values
-        best_match, min_distance = None, float("inf")
-        match_counts = {}
-        
-        for ground_truth_cluster in ground_truth_clusters:
-            ground_truth_points = ground_truth[ground_truth["Cluster"].replace({-1: "Noise", 0: "N", 1: "Ti"}) == ground_truth_cluster][["x", "y"]].values
-            if len(model_points) > 0 and len(ground_truth_points) > 0:
-                distance_matrix = pairwise_distances(model_points, ground_truth_points)
-                distance = distance_matrix.min(axis=1).mean()
-                if distance < min_distance:
-                    best_match, min_distance = ground_truth_cluster, distance
-            
-            match_count = len(set(map(tuple, model_points)).intersection(set(map(tuple, ground_truth_points))))
-            match_counts[ground_truth_cluster] = match_count
-        
-        cluster_matches.append({
-            "Model Cluster": model_cluster,
-            "Ground Truth Cluster": best_match,
-            "Distance": min_distance
-        })
-        correct_assignments += match_counts.get(best_match, 0)
-    confusion_matrix = metrics.confusion_matrix(ground_truth_clusters, model_clusters)
-    normalized_confusion_matrix = confusion_matrix / confusion_matrix.sum(axis=1)[:, np.newaxis]
-    accuracy = metrics.accuracy_score(ground_truth_clusters, model_clusters)
-    
-
-    plt.figure(figsize=(10, 7))
-    sns.heatmap(normalized_confusion_matrix, 
-                annot=True, 
-                cmap='YlGnBu', 
-                fmt='.2f',
-                xticklabels=np.unique(np.concatenate((ground_truth_clusters.unique(), model_clusters.unique()))),
-                yticklabels=np.unique(np.concatenate((ground_truth_clusters.unique(), model_clusters.unique()))))
-    plt.title(f'Normalized Confusion Matrix (Accuracy: {accuracy:.2f})')
-    plt.xlabel('Predicted Label')
-    plt.ylabel('True Label')
-    plt.tight_layout()
-    plt.show(block=False)
-    
-    print("\nCluster Matching Results:")
-    print(results)
-    print(f"\nAverage Matching Distance: {results['Distance'].mean()}")
-    print(f"Accuracy: {accuracy * 100:.2f}%")
-    return results, accuracy, confusion_matrix
-
-in_data = load_in_file("../cut_eval/in_3/I127_36MeV_ref-TiN_pos02.asc")
+gin_data = load_in_file("../cut_eval/in_3/I127_36MeV_ref-TiN_pos02.asc")
 cut_data = load_cut_files("../cut_eval/cut_3")
 ground_truth = assign_noise(in_data, cut_data)
 
