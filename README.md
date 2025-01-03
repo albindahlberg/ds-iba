@@ -9,7 +9,7 @@
 
 ## Project Structure
 - `cut_eval`: provided file structure for evaluation
-- `data`: provided reference files to use for implementing model, filters, features, EDA etc.
+- `data`: provided reference files to use for implementing model, filters, features, EDA etc. `/rbs` and `/Sanath...` were not used.
 - `models`: implemented models
 - `notebooks`: code files, both .ipynb and .py. `main.py` is the culmination of all work
 - `utils`: utility functions, both provided and implemented
