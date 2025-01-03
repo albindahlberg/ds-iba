@@ -1,3 +1,4 @@
+# Johan Hedenström
 from scipy.optimize import curve_fit
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
@@ -6,6 +7,18 @@ import numpy as np
 # Function describing trajectory curves
 def fx(x, a, b, c):
     return -abs(a) / np.sqrt(abs(x + b)) + c
+
+def fx_prob(x, a, b, c, covar):
+    # Standard deviations for the parameters from the covariance matrix
+    std = np.sqrt(np.diag(covar))
+    
+    i = 2  # Multiplier for the standard deviation (2σ)
+    
+    # Compute the lower and upper bounds
+    lower = -abs(a - i*std[0]) / np.sqrt(abs(x + b - i*std[1])) + c - i*std[2]
+    upper = -abs(a + i*std[0]) / np.sqrt(abs(x + b + i*std[1])) + c + i*std[2]
+    
+    return lower, upper
 
 # Approximate perpendicular distance from point to curve
 def approximate_distance(x, y, a, b, c):
@@ -69,8 +82,7 @@ def fit(x_traj, y_traj, x_data, y_data):
                                        y_traj_filtered, 
                                        bounds=param_space,
                                        p0=initial_guess)
-
-    return params
+    return params, covariance
 
 # Function to find trajectory boundary
 def find_domain(x_data, y_data, params, radius=10, density_threshold=3):

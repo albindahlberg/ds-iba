@@ -5,14 +5,13 @@ from scipy.linalg import qr
 from math import ceil
 import matplotlib.pyplot as plt
 
-
-
 class MixIRLS:
     """
     Sequential algorithm for Mixed Linear Regression.
 
     Originally written by Pini Zilber & Boaz Nadler / 2023.
-    Modified by Albin Åberg Dahlberg, Nils Staffsgård, Johan Hedenström, Folke Hilding / 2024.
+    
+    Modified by Albin Åberg Dahlberg, Nils Staffsgård / 2024.
 
     Modifications include:
         - Making the algorithm a class
@@ -206,7 +205,7 @@ class MixIRLS:
     def find_component(self, X, y, beta_init=[]):
         beta, w, iter = self.MixIRLS_inner(X, y, beta_init)
 
-        ##### Refinement step, weights along gaussian likelihood        
+        ##### Refinement step, weights along gaussian likelihood   
         residuals = y - X @ beta
         # Update weights as gaussian
         variance = np.var(residuals)
@@ -319,6 +318,8 @@ class MixIRLS:
 
 class MixtureLinearRegression():
     """Implementation of Mixture of Linear Regressions. 
+    
+    Written by Albin Åberg Dahlberg
     
     Based on Section 14.5.1 - Pattern Recognition and Machine Learning by Bishop, 2006. 
     Some components usually 'die out' on ToF-ERDA, making them have 0 probability to explain any data point.
